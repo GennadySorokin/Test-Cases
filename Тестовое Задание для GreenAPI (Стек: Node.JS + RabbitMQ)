@@ -1,0 +1,706 @@
+Тестовое задание на должность "Разработчик Node.JS"
+
+Автор: Геннадий Сорокин
+
+Что необходимо сделать:
+В рамках выполнения тестового задания требуется разработать механизм асинхронной обработки
+HTTP запросов и опубликовать исходники проекта на Github для дальнейшего анализа и проверки.
+
+Время на выполнения задания: 3 дня.
+
+Требования:
+1. Требуется разработать механизм асинхронной обработки HTTP запросов
+2. Требуется использовать стек NodeJS, RabbitMQ
+3. Требуется оформить в виде репозитория на Github
+4. Требуется приложить инструкцию по локальному развертыванию проекта
+5. Требуется реализовать логирование для целей отладки и мониторинга
+6. Требуется разработать микросервис М1 для обработки входящих HTTP запросов
+7. Требуется разработать микросервис М2 для обработки заданий из RabbitMQ
+
+Алгоритм работы:
+• Получаем HTTP запрос на уровне микросервиса М1
+• Транслируем HTTP запрос в очередь RabbitMQ. Запрос трансформируется в задание
+• Обрабатываем задание микросервисом М2 из очереди RabbitMQ
+• Помещаем результат обработки задания в RabbitMQ
+• Возвращаем результат HTTP запроса как результат выполнения задания из RabbitMQ
+
+Принципиальная Схема:
+HTTP запрос – Микросервис М1 (Обработка Запроса) – RabbitMQ – Микросервис М2 (обработка задания.
+
+Главное требование:
+Написать на Node.JS механизм асинхронной обработки HTTP запросов (Стек: Node.JS + RabbitMQ)
+
+Решение Тестового Задания
+1-2. Требуется разработать механизм асинхронной обработки HTTP запросов (Стек: NodeJS, RabbitMQ)
+1.1. Часть Node.JS
+Для реализации механизма асинхронной обработки HTTP запросов на Node.JS и его интеграции с RabbitMQ, мы можем использовать библиотеку amqplib, которая позволит нам взаимодействовать с RabbitMQ из Node.JS. 
+Кроме того, для обработки HTTP запросов и создания микросервиса М1, мы будем использовать фреймворк Express.js.
+
+Нам потребуется предварительно установить Node.js и установить зависимости для проекта, включая библиотеку amqplib:
+bash
+
+npm init -y
+npm install express amqplib
+
+Теперь создадим два файла для нашего микросервиса:
+
+app.js (микросервис М1):
+javascript
+
+const express = require('express');
+const app = express();
+const amqp = require('amqplib');
+
+const QUEUE_NAME = 'task_queue';
+
+app.use(express.json());
+
+// Обработка HTTP запроса и отправка задания в RabbitMQ
+app.post('/process', async (req, res) => {
+  const task = req.body;
+
+  try {
+    // Подключаемся к RabbitMQ
+    const connection = await amqp.connect('amqp://localhost');
+    const channel = await connection.createChannel();
+
+    // Объявляем очередь, если еще не существует
+    await channel.assertQueue(QUEUE_NAME, { durable: true });
+
+    // Отправляем задание в очередь
+    channel.sendToQueue(QUEUE_NAME, Buffer.from(JSON.stringify(task)), {
+      persistent: true, // Делаем сообщение постоянным, чтобы не потерять его при перезапуске RabbitMQ
+    });
+
+    console.log('Задание отправлено в очередь:', task);
+    res.status(202).send('Задание отправлено в очередь для обработки.');
+  } catch (error) {
+    console.error('Ошибка отправки задания в очередь:', error);
+    res.status(500).send('Ошибка отправки задания в очередь.');
+  }
+});
+
+app.listen(3000, () => {
+  console.log('Микросервис М1 запущен и прослушивает порт 3000...');
+});
+
+
+worker.js (микросервис М2):
+javascript
+
+const amqp = require('amqplib');
+
+const QUEUE_NAME = 'task_queue';
+
+// Функция для обработки задания
+function processTask(task) {
+  // Здесь происходит обработка задания (ваша логика обработки)
+  console.log('Обработано задание:', task);
+}
+
+async function startWorker() {
+  try {
+    // Подключаемся к RabbitMQ
+    const connection = await amqp.connect('amqp://localhost');
+    const channel = await connection.createChannel();
+
+    // Объявляем очередь, если еще не существует
+    await channel.assertQueue(QUEUE_NAME, { durable: true });
+
+    // Устанавливаем максимальное количество неподтвержденных заданий (преподтверждение будет отправлено после обработки)
+    channel.prefetch(1);
+
+    console.log('Микросервис М2 ожидает задания...');
+
+    // Получаем задания из очереди и обрабатываем их
+    channel.consume(
+      QUEUE_NAME,
+      async (msg) => {
+        const task = JSON.parse(msg.content.toString());
+
+        // Обработка задания
+        await processTask(task);
+
+        // Подтверждение выполнения задания
+        channel.ack(msg);
+      },
+      { noAck: false } // Отключение авто-подтверждения, чтобы задание не потерялось при сбое
+    );
+  } catch (error) {
+    console.error('Ошибка запуска микросервиса М2:', error);
+  }
+}
+
+startWorker();
+
+
+1.2. RabbitMQ Часть
+
+Нам потребуется создать отдельный файл, который будет отвечать за работу с RabbitMQ.
+
+rabbitmq.js:
+javascript
+
+const amqp = require('amqplib');
+
+const QUEUE_NAME = 'task_queue';
+
+// Функция для отправки задания в очередь RabbitMQ
+async function sendTaskToQueue(task) {
+  try {
+    // Подключаемся к RabbitMQ
+    const connection = await amqp.connect('amqp://localhost');
+    const channel = await connection.createChannel();
+
+    // Объявляем очередь, если еще не существует
+    await channel.assertQueue(QUEUE_NAME, { durable: true });
+
+    // Отправляем задание в очередь
+    channel.sendToQueue(QUEUE_NAME, Buffer.from(JSON.stringify(task)), {
+      persistent: true, // Делаем сообщение постоянным, чтобы не потерять его при перезапуске RabbitMQ
+    });
+
+    console.log('Задание отправлено в очередь:', task);
+    connection.close(); // Закрываем соединение после отправки задания
+  } catch (error) {
+    console.error('Ошибка отправки задания в очередь:', error);
+  }
+}
+
+// Функция для запуска микросервиса М2, который будет слушать задания из очереди
+async function startWorker() {
+  try {
+    // Подключаемся к RabbitMQ
+    const connection = await amqp.connect('amqp://localhost');
+    const channel = await connection.createChannel();
+
+    // Объявляем очередь, если еще не существует
+    await channel.assertQueue(QUEUE_NAME, { durable: true });
+
+    // Устанавливаем максимальное количество неподтвержденных заданий (преподтверждение будет отправлено после обработки)
+    channel.prefetch(1);
+
+    console.log('Микросервис М2 ожидает задания...');
+
+    // Получаем задания из очереди и обрабатываем их
+    channel.consume(
+      QUEUE_NAME,
+      async (msg) => {
+        const task = JSON.parse(msg.content.toString());
+
+        // Обработка задания
+        await processTask(task);
+
+        // Подтверждение выполнения задания
+        channel.ack(msg);
+      },
+      { noAck: false } // Отключение авто-подтверждения, чтобы задание не потерялось при сбое
+    );
+  } catch (error) {
+    console.error('Ошибка запуска микросервиса М2:', error);
+  }
+}
+
+// Функция для обработки задания
+async function processTask(task) {
+  // Здесь происходит обработка задания (ваша логика обработки)
+  console.log('Обработано задание:', task);
+}
+
+module.exports = { sendTaskToQueue, startWorker };
+
+
+Теперь, когда у нас есть отдельный модуль для работы с RabbitMQ, мы можем использовать его в нашем app.js для отправки задания в очередь:
+app.js:
+javascript
+
+const express = require('express');
+const app = express();
+const rabbitmq = require('./rabbitmq');
+
+app.use(express.json());
+
+// Обработка HTTP запроса и отправка задания в RabbitMQ
+app.post('/process', async (req, res) => {
+  const task = req.body;
+
+  try {
+    // Отправляем задание в очередь RabbitMQ
+    await rabbitmq.sendTaskToQueue(task);
+
+    console.log('Задание отправлено в очередь:', task);
+    res.status(202).send('Задание отправлено в очередь для обработки.');
+  } catch (error) {
+    console.error('Ошибка отправки задания в очередь:', error);
+    res.status(500).send('Ошибка отправки задания в очередь.');
+  }
+});
+
+app.listen(3000, () => {
+  console.log('Микросервис М1 запущен и прослушивает порт 3000...');
+});
+
+Теперь наш механизм асинхронной обработки HTTP запросов на Node.JS с использованием RabbitMQ должен быть полностью рабочим. Вам остается только запустить микросервисы М1 и М2 для проверки работы.
+Нам также нужно убедиться, что RabbitMQ работает и слушает на localhost на стандартном порту (5672).
+Теперь мы можем запустить микросервисы М1 и М2, и наш механизм асинхронной обработки HTTP запросов на Node.JS должен быть готов к работе.
+
+
+3. Оформление для репозитория GitHub
+
+Необходимо создать новую папку для нашего проекта и перейти в нее через терминал (командную строку).
+
+Инициализировать пустой репозиторий в папке проекта:
+bash
+git init
+Создайте два файла app.js и rabbitmq.js с предоставленным кодом и сохраните их в вашей папке проекта.
+
+Создайте файл package.json, определив зависимости для нашего проекта:
+bash
+npm init -y
+npm install express amqplib
+
+Перенесите ваши файлы в папку проекта, включая package.json.
+
+Необходимо создать файл .gitignore, чтобы исключить из репозитория ненужные файлы:
+
+node_modules/
+
+Необходимо добавить все файлы в репозиторий и сделать первый коммит:
+bash
+
+git add .
+git commit -m "Initial commit"
+
+Необходимо создать пустой репозиторий на GitHub.
+
+Привязка локального репозитория к удаленному репозиторию на GitHub:
+bash
+
+git remote add origin <URL репозитория на GitHub>
+
+Загрузите ваш локальный репозиторий на GitHub:
+bash
+
+git push -u origin master
+
+4. Инструкция по локальному развертыванию проекта
+
+Локальное развертывание проекта
+
+1. Подготовка среды
+Необходимо убедиться, что у нас установлен Node.js. Если нет, его можно загрузить с официального сайта Node.js (https://nodejs.org/).
+Установите Git, если его нет. Его можно загрузить с официального сайта Git (https://git-scm.com/).
+
+2.Клонирование репозитория
+Откройте командную строку (терминал) на вашем компьютере.
+
+Ввести следующую команду, чтобы склонировать репозиторий на локальное устройство:
+bash
+
+git clone <URL репозитория на GitHub>
+
+3. Установка зависимостей
+
+Перейти в папку проекта, используя командную строку:
+bash
+
+cd проект
+
+Установить все зависимости проекта, выполнив команду:
+bash
+
+npm install
+
+4. Запуск микросервиса М1
+Запустить микросервис М1, выполнив следующую команду:
+bash
+
+node app.js
+
+Микросервис М1 будет запущен и прослушивать порт 3000. Вы должны увидеть сообщение "Микросервис М1 запущен и прослушивает порт 3000..." в командной строке.
+«Что значит прослушивание порта?»
+«Это значит, что другие процессы могут подключаться к серверу по этому порту»
+
+5. Запуск микросервиса М2
+Открыть новую командную строку (терминал) в той же папке проекта.
+Запустить микросервис М2, выполнив следующую команду:
+bash
+
+node worker.js
+Микросервис М2 будет ожидать задания из очереди. Вы должны увидеть сообщение "Микросервис М2 ожидает задания..." в этой командной строке.
+
+6. Отправка HTTP запроса
+
+Теперь мы можем отправить HTTP запрос для обработки задания.
+Использовать можно любой инструмент для отправки HTTP запросов, например, Postman или curl.
+Отправьте POST запрос на http://localhost:3000/process, указав тело запроса с заданием в формате JSON.
+
+Пример тела запроса (задание):
+
+json
+
+{
+  "task": "Ваше задание здесь"
+}
+Вы должны получить ответ, сообщающий, что задание отправлено в очередь для обработки.
+
+7. Проверка результатов
+После отправки задания, микросервис М1 отправит его в очередь RabbitMQ.
+Микросервис М2 обработает задание и выведет результат обработки в командную строку.
+
+
+5. Реализация логирования для целей отладки и мониторинга
+
+Для реализации логирования для целей отладки и мониторинга в нашем проекте, мы будем использовать библиотеку winston, которая предоставляет мощный и гибкий механизм логирования в Node.js.
+
+1. Установка зависимости
+
+Необходимо убедиться, что мы установили все необходимые зависимости для нашего проекта, включая winston:
+bash
+
+npm install winston
+
+2. Обновление файла rabbitmq.js
+
+Добавим логирование в файл rabbitmq.js, чтобы отслеживать отправку задания в очередь и его обработку:
+javascript
+
+const winston = require('winston');
+
+// Создание логгера
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'rabbitmq.log' }),
+  ],
+});
+
+// ...
+
+// Функция для отправки задания в очередь RabbitMQ
+async function sendTaskToQueue(task) {
+  try {
+    // Отправляем задание в очередь RabbitMQ
+    await channel.sendToQueue(QUEUE_NAME, Buffer.from(JSON.stringify(task)), {
+      persistent: true, // Делаем сообщение постоянным, чтобы не потерять его при перезапуске RabbitMQ
+    });
+
+    // Логирование отправки задания
+    logger.info('Задание отправлено в очередь:', task);
+
+    connection.close(); // Закрываем соединение после отправки задания
+  } catch (error) {
+    logger.error('Ошибка отправки задания в очередь:', error);
+  }
+}
+
+// ...
+
+// Функция для обработки задания
+async function processTask(task) {
+  // Здесь происходит обработка задания (ваша логика обработки)
+  logger.info('Обработано задание:', task);
+
+4. Обновление файла app.js
+
+Добавим логирование в файл app.js, чтобы отслеживать HTTP запросы и ответы:
+javascript
+
+const winston = require('winston');
+
+// Создание логгера
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'app.log' }),
+  ],
+});
+
+// ...
+
+// Обработка HTTP запроса и отправка задания в RabbitMQ
+app.post('/process', async (req, res) => {
+  const task = req.body;
+
+  try {
+    // Отправляем задание в очередь RabbitMQ
+    await rabbitmq.sendTaskToQueue(task);
+
+    // Логирование успешной отправки задания
+    logger.info('Задание отправлено в очередь:', task);
+
+    res.status(202).send('Задание отправлено в очередь для обработки.');
+  } catch (error) {
+    // Логирование ошибки при отправке задания
+    logger.error('Ошибка отправки задания в очередь:', error);
+    res.status(500).send('Ошибка отправки задания в очередь.');
+  }
+});
+
+// ...
+
+4. Запуск проекта
+
+Запустить микросервисы М1 и М2, как описано ранее:
+bash
+
+node app.js
+node worker.js
+
+5.Мониторинг логов
+Теперь логи будут сохраняться в файлах app.log и rabbitmq.log в корневой папке вашего проекта.
+Мы можем мониторить логи в реальном времени или просматривать их в любое удобное время для отладки и мониторинга проекта.
+
+В результате, наш проект будет выполнять логирование всех важных событий, таких как отправка задания в очередь и обработка задания, что поможет отслеживать процесс работы и обнаруживать возможные проблемы для целей отладки и мониторинга.
+
+
+
+6. Создание микросервиса М1 для обработки входящих HTTP запросов
+
+В этом микросервисе мы будем использовать Express.js, чтобы обрабатывать HTTP запросы и отправлять задания в очередь RabbitMQ, как было описано в кейсе. Также, мы будем использовать winston для логирования, как было реализовано ранее.
+
+1. Установка зависимостей
+Убедиться, что мы установили Node.js на вашем компьютере.
+Создать новую папку для проекта и перейте в нее через терминал.
+
+Инициализировать проект и установить зависимости:
+bash
+
+npm init -y
+npm install express winston amqplib
+
+2. Создание файла app.js
+
+Создать файл app.js в корневой папке проекта и добавить следующий код:
+javascript
+
+const express = require('express');
+const amqp = require('amqplib');
+const winston = require('winston');
+
+// Создание логгера
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'app.log' }),
+  ],
+});
+
+const app = express();
+const QUEUE_NAME = 'task_queue';
+
+// Middleware для парсинга JSON из тела запроса
+app.use(express.json());
+
+// Обработка HTTP запроса и отправка задания в RabbitMQ
+app.post('/process', async (req, res) => {
+  const task = req.body;
+
+  try {
+    // Отправляем задание в очередь RabbitMQ
+    await sendTaskToQueue(task);
+
+    // Логирование успешной отправки задания
+    logger.info('Задание отправлено в очередь:', task);
+
+    res.status(202).send('Задание отправлено в очередь для обработки.');
+  } catch (error) {
+    // Логирование ошибки при отправке задания
+    logger.error('Ошибка отправки задания в очередь:', error);
+    res.status(500).send('Ошибка отправки задания в очередь.');
+  }
+});
+
+// Функция для отправки задания в очередь RabbitMQ
+async function sendTaskToQueue(task) {
+  try {
+    // Подключаемся к RabbitMQ
+    const connection = await amqp.connect('amqp://localhost');
+    const channel = await connection.createChannel();
+
+    // Объявляем очередь, если еще не существует
+    await channel.assertQueue(QUEUE_NAME, { durable: true });
+
+    // Отправляем задание в очередь
+    channel.sendToQueue(QUEUE_NAME, Buffer.from(JSON.stringify(task)), {
+      persistent: true, // Делаем сообщение постоянным, чтобы не потерять его при перезапуске RabbitMQ
+    });
+
+    connection.close(); // Закрываем соединение после отправки задания
+  } catch (error) {
+    logger.error('Ошибка отправки задания в очередь:', error);
+    throw error;
+  }
+}
+
+// Запуск сервера
+const PORT = 3000;
+app.listen(PORT, () => {
+  logger.info(`Микросервис М1 запущен и прослушивает порт ${PORT}...`);
+});
+
+
+3.Запуск микросервиса М1
+
+Теперь мы можем запустить микросервис М1, выполнив следующую команду в терминале:
+bash
+
+node app.js
+Микросервис М1 будет запущен и прослушивать порт 3000. Вы должны увидеть сообщение "Микросервис М1 запущен и прослушивает порт 3000..." в командной строке.
+
+4.Отправка HTTP запроса
+Теперь мы можем отправить HTTP запрос для обработки задания.
+Использовать любой инструмент для отправки HTTP запросов, например, Postman или curl.
+Отправить POST запрос на http://localhost:3000/process, указав тело запроса с заданием в формате JSON.
+
+Пример тела запроса (задание):
+json
+
+{
+  "task": "Ваше задание здесь"
+}
+
+Мы должны получить ответ, сообщающий, что задание отправлено в очередь для обработки.
+
+Теперь наш микросервис М готов к обработке входящих HTTP запросов и отправке заданий в очередь RabbitMQ для дальнейшей обработки микросервисом М2. 
+Чтобы улучшить производительность и масштабируемость, мы можем запустить несколько экземпляров микросервиса М1 и подключить их к одной и той же очереди RabbitMQ.
+
+
+
+6. Создание микросервиса М2 для обработки заданий из RabbitMQ
+
+Мы создадим микросервис М2 для обработки заданий из очереди RabbitMQ. 
+Мы будем использовать amqplib для подключения к RabbitMQ и обработки сообщений из очереди. 
+Также, мы будем использовать winston для логирования, как было реализовано ранее.
+
+Установка зависимостей
+
+Убедитесь, что у вас установлен Node.js на вашем компьютере.
+
+Создайте новую папку для проекта и перейдите в нее через терминал.
+
+Инициализировать проект и установите зависимости:
+bash
+npm init -y
+npm install amqplib winston
+
+2. Создание файла worker.js
+
+Необходимо создать файл worker.js в корневой папке проекта и добавить следующий код:
+
+javascript
+
+const amqp = require('amqplib');
+const winston = require('winston');
+
+// Создание логгера
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'worker.log' }),
+  ],
+});
+
+const QUEUE_NAME = 'task_queue';
+
+// Функция для обработки задания
+async function processTask(task) {
+  // Здесь происходит обработка задания (ваша логика обработки)
+  logger.info('Обработано задание:', task);
+}
+
+// Функция для подключения к RabbitMQ и обработки сообщений из очереди
+async function startWorker() {
+  try {
+    // Подключаемся к RabbitMQ
+    const connection = await amqp.connect('amqp://localhost');
+    const channel = await connection.createChannel();
+
+    // Объявляем очередь, если еще не существует
+    await channel.assertQueue(QUEUE_NAME, { durable: true });
+
+    logger.info('Микросервис М2 ожидает задания...');
+
+    // Функция обратного вызова для обработки сообщений из очереди
+    channel.consume(
+      QUEUE_NAME,
+      async (message) => {
+        const task = JSON.parse(message.content.toString());
+
+        // Обрабатываем задание
+        await processTask(task);
+
+        // Подтверждаем обработку сообщения, чтобы оно было удалено из очереди
+        channel.ack(message);
+      },
+      { noAck: false } // Включаем ручное подтверждение обработки сообщений
+    );
+  } catch (error) {
+    logger.error('Ошибка при работе с RabbitMQ:', error);
+  }
+}
+
+// Запускаем микросервис М2 для обработки заданий
+startWorker();
+
+
+3.Запуск микросервиса М2
+Теперь мы можем запустить микросервис М2, выполнив следующую команду в терминале:
+bash
+node worker.js
+
+Микросервис М2 будет ожидать задания из очереди RabbitMQ. 
+Мы должны увидеть сообщение "Микросервис М2 ожидает задания..." в командной строке.
+
+4/ Обработка заданий
+Когда микросервис М1 отправляет задание в очередь RabbitMQ, микросервис М2 автоматически начинает обрабатывать задание.
+Мы можем следить за логами, чтобы увидеть, как обрабатываются задания.
+
+Теперь наш микросервис М2 готов к обработке заданий из очереди RabbitMQ. 
+Он будет прослушивать очередь и обрабатывать задания по мере их поступления из микросервиса М1.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
